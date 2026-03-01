@@ -1,73 +1,43 @@
-const express = require("express");
-const multer = require("multer");
-const mongoose = require("mongoose");
-const cors = require("cors");
-const bcrypt = require("bcryptjs");
-const path = require("path");
+const express = require('express');
+const multer = require('multer');
+const faceapi = require('face-api.js');
+const canvas = require('canvas');
+const path = require('path');
+
+const { Canvas, Image, ImageData } = canvas;
+faceapi.env.monkeyPatch({ Canvas, Image, ImageData });
 
 const app = express();
-app.use(cors());
-app.use(express.json());
-app.use("/uploads", express.static("uploads"));
-app.use(express.static("public"));
+const upload = multer({ dest: 'uploads/' });
 
-/* ---------------- DATABASE ---------------- */
-mongoose.connect(process.env.MONGO_URL || "mongodb://127.0.0.1/adak", {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-}).then(()=>console.log("MongoDB Connected"));
+// Load Models on Startup
+async function loadModels() {
+    const modelPath = path.join(__dirname, 'models');
+    await faceapi.nets.tinyFaceDetector.loadFromDisk(modelPath);
+    await faceapi.nets.faceLandmark68Net.loadFromDisk(modelPath);
+    await faceapi.nets.faceRecognitionNet.loadFromDisk(modelPath);
+    console.log("AI Models Loaded");
+}
 
-/* ---------------- MODELS ---------------- */
-const User = mongoose.model("User", new mongoose.Schema({
-  name:String,
-  email:String,
-  password:String,
-  role:String
-}));
+app.use(express.static('public'));
 
-const Evidence = mongoose.model("Evidence", new mongoose.Schema({
-  filename:String,
-  original:String,
-  date:{type:Date,default:Date.now}
-}));
-
-/* ---------------- AUTH ---------------- */
-app.post("/api/signup", async(req,res)=>{
-  const hash = await bcrypt.hash(req.body.password,10);
-  const user = await User.create({...req.body,password:hash});
-  res.json({success:true});
+app.post('/analyze', upload.single('frame'), async (req, res) => {
+    try {
+        const img = await canvas.loadImage(req.file.path);
+        const detections = await faceapi.detectAllFaces(img, new faceapi.TinyFaceDetectorOptions())
+                                        .withFaceLandmarks();
+        
+        // Logic: If no landmarks are found or 'jitter' is high, it's a potential spoof
+        const isSuspicious = detections.length === 0; 
+        
+        res.json({ 
+            isReal: !isSuspicious, 
+            confidence: detections[0]?.detection.score || 0,
+            landmarks: detections[0]?.landmarks.positions.length || 0
+        });
+    } catch (error) {
+        res.status(500).send(error.message);
+    }
 });
 
-app.post("/api/login", async(req,res)=>{
-  const user = await User.findOne({email:req.body.email});
-  if(!user) return res.json({error:"User not found"});
-  const ok = await bcrypt.compare(req.body.password,user.password);
-  if(!ok) return res.json({error:"Wrong password"});
-  res.json({success:true,role:user.role,name:user.name});
-});
-
-/* ---------------- UPLOADS ---------------- */
-const storage = multer.diskStorage({
- destination:"uploads/",
- filename:(req,file,cb)=>{
-   cb(null,Date.now()+"-"+file.originalname);
- }
-});
-const upload = multer({storage});
-
-app.post("/api/upload", upload.single("file"), async(req,res)=>{
-  const record = await Evidence.create({
-    filename:req.file.filename,
-    original:req.file.originalname
-  });
-  res.json(record);
-});
-
-app.get("/api/evidence", async(req,res)=>{
-  const files = await Evidence.find().sort({date:-1});
-  res.json(files);
-});
-
-/* ---------------- START ---------------- */
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, ()=>console.log("Server running on",PORT));
+loadModels().then(() => app.listen(3000, () => console.log('Server running on http://localhost:3000')));
