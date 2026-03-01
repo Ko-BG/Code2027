@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Fraud Guard UI</title>
+    <style>
+        #scanner { width: 400px; border: 5px solid #333; transition: border-color 0.3s; }
+        .secure { border-color: #2ecc71 !important; }
+        .danger { border-color: #e74c3c !important; }
+    </style>
+</head>
+<body>
+    <h2>Identity Verification System</h2>
+    <video id="video" width="400" height="300" autoplay muted></video>
+    <p id="alert">Scanning for AI Impersonation...</p>
+
+    <script>
+        const video = document.getElementById('video');
+        const alertBox = document.getElementById('alert');
+
+        navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+            video.srcObject = stream;
+            setInterval(captureAndCheck, 2000); // Check every 2 seconds
+        });
+
+        async function captureAndCheck() {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            
+            canvas.toBlob(async (blob) => {
+                const formData = new FormData();
+                formData.append('frame', blob);
+
+                const response = await fetch('/analyze', { method: 'POST', body: formData });
+                const result = await response.json();
+
+                if (result.isReal) {
+                    alertBox.innerText = "Identity Verified ✅";
+                    video.className = "secure";
+                } else {
+                    alertBox.innerText = "FRAUD DETECTED: AI/SPOOF ATTACK ❌";
+                    video.className = "danger";
+                }
+            });
+        }
+    </script>
+</body>
+</html>
